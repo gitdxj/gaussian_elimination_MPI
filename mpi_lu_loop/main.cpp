@@ -15,7 +15,7 @@
 #include <iostream>
 
 using namespace std;
-const int N = 1000;
+const int N = 10;
 
 void thread_perform(int rank);
 void elimination(float **matrix/*矩阵*/, int n_row/*行数*/, float *row_k/*第k行*/, 
@@ -46,10 +46,16 @@ void thread_perform(int rank)
     int q = N % m;
     int _n = (N - q) / m;
     int matrix_size;  // 该节点所负责的行数
-    if(rank <= q)
+ 
+    if(0 < rank && rank <= q)
         matrix_size = _n + 1;
     else
         matrix_size = _n;
+        
+    // 用来存这一节点所负责的行
+    float **mpi_matrix = new float*[matrix_size];
+    for(int i=0; i<matrix_size; i++)
+        mpi_matrix[i] = new float[N];
     
     float *row_k = new float[N];
 
@@ -77,54 +83,98 @@ void thread_perform(int rank)
         
         gettimeofday(&start, NULL);
 
+        int count = 0;
         // 将各行的值发送给各线程
-        for(int i = _n; i<N; i++)
+        for(int i = 0; i<N; i++)
         {
             // 计算第i行应该要发到的节点是哪个
-            int dest = i / _n;
-            if(m == dest)
-                dest--;
-            if(dest != 0)
+            int dest = i % m;
+            if(dest != rank)
                 MPI_Send(A[i], N/*size*/, MPI_FLOAT/*type*/, dest/*dest*/, 0, MPI_COMM_WORLD);
-
+            else{
+                // 自己负责的行移动至mpi_matrix里面
+                for(int j = 0; j<N; j++)
+                    mpi_matrix[count][j] = A[i][j];
+                count ++;
+            }
         }
+        cout << proc_name << ':' << "rank[" << rank << "]: Sending all the data "  << endl;
+        cout << proc_name << ':' << "rank[" << rank << "]: mpi_matrix " << endl;
+        show_matrix(mpi_matrix, matrix_size, N);
 
-        // 对自己负责的行做division操作，发送结果，并对自己负责的行做消去
-        for(int k=0; k < _n; k++)
+        for(int i=0; i<matrix_size; i++)
         {
-            // division
-            for(int j=k+1; j<N; j++)
-                A[k][j] = A[k][j] / A[k][k];
-            A[k][k] = 1.0;
-
-            // 将division结果发给后面的节点
-            for(int dest=rank+1; dest<m; dest++){
-                MPI_Send(A[k], N, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
+            cout << proc_name << ':' << "rank[" << rank << "]: 进行到第 " << i << " 行" << endl;
+            // elimination
+            if(0 == i){
+                for(int k=0; k<rank; k++){
+                    // 从src节点接收第k行division操作后的结果
+                    int src = k%m;
+                    MPI_Recv(row_k, N, MPI_FLOAT, src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    // 对自己负责的行做消去
+                    matrix_elimination(mpi_matrix, matrix_size, row_k, N, k, i);
+                }
+            }
+            else{
+                for(int j=1; j<=m-1;j++){
+                    int k = m *(i-1) + j + rank;
+                    int src = k%m;
+                    MPI_Recv(row_k, N, MPI_FLOAT, src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    // 对自己负责的行做消去
+                    matrix_elimination(mpi_matrix, matrix_size, row_k, N, k, i);
+                }
             }
 
-            // 对剩下的行做消去
-            int rows_left = _n-1 - k;
-            if(rows_left <= 0)
-                break;
-            
-            matrix_elimination(A, _n, A[k], N, k, k+1);
-            
-        }
+            // division
+            int k = m *i + rank;
+            for(int j=k+1; j<N; j++)
+                mpi_matrix[i][j] = mpi_matrix[i][j] / mpi_matrix[i][k];
+            mpi_matrix[i][k] = 1.0;
+            // elimination
+            matrix_elimination(mpi_matrix, matrix_size, mpi_matrix[i], N, k, i+1);
 
-        for(int i=_n; i<N; i++)
-        {
-            // 确定第i行来自哪一个节点
-            int src = i/_n;
-            if(src == m)
-                src--;
-            MPI_Recv(A[i], N, MPI_FLOAT, src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            // 把division之后的结果发给其他各节点
+            int end_row_rank = (N-1) % m;  // 原矩阵最后一行对应的节点
+            int end_row = N-1;
+            int real_row = i*m + rank;
+            // 看其对应的原矩阵的行是不是最后m-1行，如果是则最后发送的目标节点并不是全部节点
+            if((i == matrix_size-1) && (end_row-m+2 <=real_row) &&(real_row <= end_row))
+            {
+                for(int row=real_row+1; row<=end_row; row++){
+                	int dest = row % m;
+                    if(dest != rank)
+                        MPI_Send(mpi_matrix[i], N, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
+                }
+            }
+            else
+            {
+                for(int dest=0; dest<m; dest++)
+                    if(dest != rank) 
+                        MPI_Send(mpi_matrix[i], N, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
+            }
+
         }
         
+        count = 0;
+        for(int i = 0; i<N; i++)
+        {
+            int src = i % m;
+            if(rank != src){
+                cout << proc_name << ':' << "rank[" << rank << "]: Receiving " << i << " row" << endl;
+                MPI_Recv(A[i], N/*size*/, MPI_FLOAT/*type*/, src/*dest*/, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+            else{
+                for(int j = 0; j<N; j++)
+                    A[i][j] =  mpi_matrix[count][j];
+                count ++;
+            }
+        }
+        cout << proc_name << ':' << "rank[" << rank << "]: Done "  << endl;
         
         
         gettimeofday(&end, NULL);
         unsigned long time_interval = 1000000*(end.tv_sec - start.tv_sec) + end.tv_usec - start.tv_usec;
-        //show_matrix(A, N);
+        show_matrix(A, N);
 
         //cout << "standard lu: "<< endl;
         if(N <= 10)
@@ -139,20 +189,19 @@ void thread_perform(int rank)
 	}
     else
     {
-        // 用来存这一节点所负责的行
-        float **mpi_matrix = new float*[matrix_size];
-        for(int i=0; i<matrix_size; i++)
-            mpi_matrix = new float[N];
-        
         // 从第rank_0节点接收初始数据
     	for(int i=0; i<matrix_size; i++)
         {
             MPI_Recv(mpi_matrix[i], N, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
 
+        show_matrix(mpi_matrix, matrix_size, N);
+
 
         for(int i=0; i<matrix_size; i++)
         {
+            cout << proc_name << ':' << "rank[" << rank << "]: 进行到第 " << i << " 行" << endl;
+
             // elimination
             if(0 == i){
                 for(int k=0; k<rank; k++){
@@ -164,34 +213,55 @@ void thread_perform(int rank)
                 }
             }
             else{
-                for(int j=0; j<m-1;j++){
-                    int k = _n *i + rank - (m-1 -j);
-                MPI_Recv(row_k, N, MPI_FLOAT, src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                // 对自己负责的行做消去
-                matrix_elimination(mpi_matrix, matrix_size, row_k, N, k, i);
+                for(int j=1; j<=m-1;j++){
+                    int k = m *(i-1) + j + rank;
+                    int src = k%m;
+                    MPI_Recv(row_k, N, MPI_FLOAT, src, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+                    // 对自己负责的行做消去
+                    matrix_elimination(mpi_matrix, matrix_size, row_k, N, k, i);
                 }
             }
 
             // division
-            int k = _n *i + rank;
+            int k = m *i + rank;
+            for(int j=k+1; j<N; j++)
+                mpi_matrix[i][j] = mpi_matrix[i][j] / mpi_matrix[i][k];
+            mpi_matrix[i][k] = 1.0;
+            // elimination
+            matrix_elimination(mpi_matrix, matrix_size, mpi_matrix[i], N, k, i+1);
+
+
+            cout << proc_name << ':' << "rank[" << rank << "]: Sending.... " << endl;
+            // 把division之后的结果发给其他各节点
+            int end_row_rank = (N-1) % m;  // 原矩阵最后一行对应的节点
+            int end_row = N-1;
+            int real_row = i*m + rank;
+            // 看其对应的原矩阵的行是不是最后m-1行，如果是则最后发送的目标节点并不是全部节点
+            if((i == matrix_size-1) && (end_row-m+2 <=real_row) &&(real_row <= end_row))
+            {
+                for(int row=real_row+1; row<=end_row; row++){
+                	int dest = row % m;
+                    if(dest!=rank)
+                        MPI_Send(mpi_matrix[i], N, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
+                }
+            }
+            else
+            {
+                for(int dest=0; dest<m; dest++)
+                    if(dest != rank) 
+                        MPI_Send(mpi_matrix[i], N, MPI_FLOAT, dest, 0, MPI_COMM_WORLD);
+            }
 
         }
-
-        // // 此节点中最后行对应原始矩阵中的行数
-        // int end_row = (matrix_size - 1) * _n + rank; 
-
-        // for(int k=0; k<=end_row; k++)
-        // {
-        //     src = k%m;  // 计算外层循环到第k行时，第k行的division操作是由哪个节点负责
-        //     if(rank == src)  // 由本节点负责
-        //     {
-        //         // division
-        //         int i = 
-        //     }
-        // }
-
-
         
+        cout << proc_name << ':' << "rank[" << rank << "]: Sending final data " << endl;
+        show_matrix(mpi_matrix, matrix_size, N);
+        // 发送全部数据到rank_0节点
+        for(int i = 0; i<matrix_size; i++)
+        {
+            MPI_Send(mpi_matrix[i], N, MPI_FLOAT, 0, 0, MPI_COMM_WORLD);
+        }
+    }
 
 }
 
