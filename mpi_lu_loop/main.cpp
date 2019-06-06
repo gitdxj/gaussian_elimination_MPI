@@ -47,8 +47,8 @@ void thread_perform(int rank)
     int _n = (N - q) / m;
     int matrix_size;  // 该节点所负责的行数
  
-    if(0 < rank && rank <= q)
-        matrix_size = _n + 1;
+    if(rank < q && q != 0)
+        matrix_size = _n+1;
     else
         matrix_size = _n;
         
@@ -58,6 +58,8 @@ void thread_perform(int rank)
         mpi_matrix[i] = new float[N];
     
     float *row_k = new float[N];
+    
+    cout << proc_name << ':' << "rank[" << rank << "]: size = " << matrix_size << endl;
 
 	if(0 == rank)
 	{
@@ -194,8 +196,6 @@ void thread_perform(int rank)
         {
             MPI_Recv(mpi_matrix[i], N, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
         }
-
-        show_matrix(mpi_matrix, matrix_size, N);
 
 
         for(int i=0; i<matrix_size; i++)
