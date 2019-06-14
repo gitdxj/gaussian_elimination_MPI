@@ -15,7 +15,7 @@
 #include <iostream>
 
 using namespace std;
-const int N = 10;
+const int N = 1000;
 
 void thread_perform(int rank);
 void elimination(float **matrix/*矩阵*/, int n_row/*行数*/, float *row_k/*第k行*/, 
@@ -59,7 +59,7 @@ void thread_perform(int rank)
     
     float *row_k = new float[N];
     
-    cout << proc_name << ':' << "rank[" << rank << "]: size = " << matrix_size << endl;
+    //cout << proc_name << ':' << "rank[" << rank << "]: size = " << matrix_size << endl;
 
 	if(0 == rank)
 	{
@@ -100,13 +100,13 @@ void thread_perform(int rank)
                 count ++;
             }
         }
-        cout << proc_name << ':' << "rank[" << rank << "]: Sending all the data "  << endl;
-        cout << proc_name << ':' << "rank[" << rank << "]: mpi_matrix " << endl;
-        show_matrix(mpi_matrix, matrix_size, N);
+        // cout << proc_name << ':' << "rank[" << rank << "]: Sending all the data "  << endl;
+        // cout << proc_name << ':' << "rank[" << rank << "]: mpi_matrix " << endl;
+        // show_matrix(mpi_matrix, matrix_size, N);
 
         for(int i=0; i<matrix_size; i++)
         {
-            cout << proc_name << ':' << "rank[" << rank << "]: 进行到第 " << i << " 行" << endl;
+            //cout << proc_name << ':' << "rank[" << rank << "]: 进行到第 " << i << " 行" << endl;
             // elimination
             if(0 == i){
                 for(int k=0; k<rank; k++){
@@ -162,7 +162,7 @@ void thread_perform(int rank)
         {
             int src = i % m;
             if(rank != src){
-                cout << proc_name << ':' << "rank[" << rank << "]: Receiving " << i << " row" << endl;
+                //cout << proc_name << ':' << "rank[" << rank << "]: Receiving " << i << " row" << endl;
                 MPI_Recv(A[i], N/*size*/, MPI_FLOAT/*type*/, src/*dest*/, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             }
             else{
@@ -171,12 +171,12 @@ void thread_perform(int rank)
                 count ++;
             }
         }
-        cout << proc_name << ':' << "rank[" << rank << "]: Done "  << endl;
+        //cout << proc_name << ':' << "rank[" << rank << "]: Done "  << endl;
         
         
         gettimeofday(&end, NULL);
         unsigned long time_interval = 1000000*(end.tv_sec - start.tv_sec) + end.tv_usec - start.tv_usec;
-        show_matrix(A, N);
+        //show_matrix(A, N);
 
         //cout << "standard lu: "<< endl;
         if(N <= 10)
@@ -200,7 +200,7 @@ void thread_perform(int rank)
 
         for(int i=0; i<matrix_size; i++)
         {
-            cout << proc_name << ':' << "rank[" << rank << "]: 进行到第 " << i << " 行" << endl;
+            //cout << proc_name << ':' << "rank[" << rank << "]: 进行到第 " << i << " 行" << endl;
 
             // elimination
             if(0 == i){
@@ -231,7 +231,7 @@ void thread_perform(int rank)
             matrix_elimination(mpi_matrix, matrix_size, mpi_matrix[i], N, k, i+1);
 
 
-            cout << proc_name << ':' << "rank[" << rank << "]: Sending.... " << endl;
+            //cout << proc_name << ':' << "rank[" << rank << "]: Sending.... " << endl;
             // 把division之后的结果发给其他各节点
             int end_row_rank = (N-1) % m;  // 原矩阵最后一行对应的节点
             int end_row = N-1;
@@ -254,8 +254,8 @@ void thread_perform(int rank)
 
         }
         
-        cout << proc_name << ':' << "rank[" << rank << "]: Sending final data " << endl;
-        show_matrix(mpi_matrix, matrix_size, N);
+        // cout << proc_name << ':' << "rank[" << rank << "]: Sending final data " << endl;
+        // show_matrix(mpi_matrix, matrix_size, N);
         // 发送全部数据到rank_0节点
         for(int i = 0; i<matrix_size; i++)
         {
@@ -287,4 +287,5 @@ void matrix_elimination(float **matrix, int n_row, float *row_k,
         matrix[i][k] = 0.0;
     }
 }
+
 
